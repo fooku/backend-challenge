@@ -1,162 +1,282 @@
-# Backend Golang Coding Test
+# User Management API
 
-## Overview
+A REST API in Go for managing users. It uses MongoDB for storage, JWT (HS256) for authentication, and bcrypt for password hashing.
 
-This coding test has two parts.
+## Quick Start
 
-| Section | Focus | Submission Type |
-| --- | --- | --- |
-| User Management API | Build a Golang user management API with MongoDB and JWT authentication | Code implementation |
-| Lottery Search System | Design a real-world lottery ticket search solution with wildcard matching | Design proposal only (no code) |
+```bash
+cp .env.example .env
+docker compose up -d --build   # start MongoDB + API on :8080
+```
 
-## User Management API
+## Design Decisions
 
-### Objective (User Management API)
+### Project Structure
 
-Build a RESTful API in Golang to manage users, using MongoDB for persistence, JWT for authentication, and clean code practices.
+```text
+cmd/api/main.go                   wiring, routes, background user counter
+internal/config/config.go         loads .env and environment variables
+internal/model/user.go            User model
+internal/handler/                 HTTP handlers
+internal/service/user_service.go  business logic, validation, bcrypt
+internal/service/token.go         JWT create and verify (HS256)
+internal/repository/              UserInterfaceRepository + MongoDB implementation
+internal/middleware/auth.go       JWT middleware
+internal/middleware/logger.go     request logging
+Dockerfile                        multi-stage build (golang:alpine → alpine, non-root user)
+docker-compose.yml                API + MongoDB
+```
 
-### Requirements (User Management API)
+Every request goes through the same layers:
 
-#### 1. User Model
+```text
+Handler → Service → Repository → MongoDB
+```
 
-Define a user entity with the following fields:
 
-- `ID` (auto-generated)
-- `Name` (string)
-- `Email` (string, unique)
-- `Password` (hashed)
-- `CreatedAt` (timestamp)
 
-#### 2. Authentication
+### Unique Email
 
-Implement:
+A unique MongoDB index is created for the `email` field.
 
-- User registration
-- User authentication that returns a JWT token
+```text
+db.users.createIndex(
+  { email: 1 },
+  { unique: true }
+)
+```
 
-JWT requirements:
 
-- Protect endpoints with JWT
-- Validate tokens via middleware
-- Sign tokens using HMAC (`HS256`) with a secret key
 
-#### 3. User Operations
+### Background User Counter
 
-Implement the following operations:
+A background goroutine uses `time.Ticker` to count the total number of users every 10 seconds.
 
-- Create a new user
-- Fetch a user by ID
-- List all users
-- Update a user's name or email
-- Delete a user
+### Password Hashing
 
-#### 4. MongoDB Integration
+Passwords are hashed using `bcrypt` before being stored in MongoDB.
 
-- Use the official Go MongoDB driver
-- Persist and retrieve user data from MongoDB
+### Validation and Error Handling
 
-#### 5. Middleware
+Basic validation is performed for required fields, email format, and MongoDB ObjectIDs.
 
-- Implement logging middleware to capture HTTP method, path, and execution time
+### Testing
 
-#### 6. Concurrency Task
+Business logic is tested at the service layer using a mock repository
 
-- Run a background goroutine every 10 seconds to log the total number of users in the database
+## Requirements
 
-#### 7. Testing
+- Docker with Docker Compose, **or**
+- Go 1.26+ and MongoDB (installed locally, remote, or started with Docker Compose)
 
-- Write unit tests using Go's standard `testing` package
-- Mock MongoDB interactions where appropriate
 
-### Bonus (Optional, User Management API)
 
-- **Containerization**: Add Docker and `docker-compose` support for the API and MongoDB
-- **Abstraction**: Use Go interfaces to abstract MongoDB operations for better testability
-- **Validation**: Implement input validation (for example, required fields and email format)
-- **Graceful Shutdown**: Handle system signals using `context.Context`
-- **gRPC Support**:
-  - Define a `.proto` file for `CreateUser` and `GetUser`
-  - Implement a gRPC server (optionally secure with token metadata)
-- **Hexagonal Architecture**:
-  - Structure the project using ports and adapters
-  - Separate domain, application, and infrastructure layers
-  - Decouple business logic from frameworks and drivers
+## Run
 
-### Deliverables (User Management API)
+**Docker Compose** (API + MongoDB):
 
-Provide a Git repository containing:
+```bash
+cp .env.example .env
+docker compose up -d --build   # build and start
+docker compose logs -f api     # follow API logs
+docker compose down            # stop
+docker compose down -v         # stop and delete MongoDB data
+```
 
-- `README.md` with setup and execution instructions
-- A guide explaining how to generate and use JWT tokens
-- Sample API requests and responses
-- Documentation of assumptions or design decisions
+- The `api` container reads its settings from `.env` (`env_file`), so `.env` must exist.
+- `MONGO_URI` is overridden to `mongodb://mongo:27017` inside the container; `localhost` in `.env` is only for running the API on the host.
+- The API waits for MongoDB's healthcheck before starting.
+- After editing `.env`, run `docker compose up -d` to recreate the container. `docker compose restart` does not reload it.
+- `.env` is excluded by `.dockerignore`, so secrets are never baked into the image.
 
-### Evaluation Criteria (User Management API)
+**Local Go** (MongoDB only in Docker):
 
-- Code quality, structure, and readability
-- Correctness and completeness of the REST API
-- Security and implementation of JWT
-- Proper usage and abstraction of MongoDB
-- Test coverage and effective mocking
-- Idiomatic Go usage
-- Bonus implementations (gRPC, Docker, validation, architecture)
+```bash
+cp .env.example .env
+docker compose up -d mongo     # start MongoDB only
+go run ./cmd/api               # start the API on :8080
+```
 
-## Lottery Search System
 
-### Objective (Lottery Search System)
 
-Design a real-world solution to search a large dataset of lottery tickets using pattern matching with wildcard support.
+## Environment Variables
 
-> This section is a design exercise. Do not implement code.
 
-### Requirements (Lottery Search System)
+| Variable         | Default                     | Description                                     |
+| ---------------- | --------------------------- | ----------------------------------------------- |
+| `PORT`           | `8080`                      | HTTP port                                       |
+| `MONGO_URI`      | `mongodb://localhost:27017` | MongoDB connection string                       |
+| `MONGO_DATABASE` | `user_management`           | Database name                                   |
+| `JWT_SECRET`     | *(required)*                | Secret key used to sign and verify HS256 tokens |
 
-#### 1. Data Volume
 
-- Handle a dataset of **10 million** lottery tickets
-- Each ticket is a 6-digit number
+```bash
+cp .env.example .env
+```
 
-#### 2. Search Pattern
+`.env` is in `.gitignore`, so the secret isn't committed.
 
-- Support a 6-character search pattern containing digits and wildcards (`*`)
-- Example patterns:
+## Run Tests
 
-| Pattern | Matches |
-| --- | --- |
-| `****23` | Numbers ending in `23` |
-| `1****5` | Numbers starting with `1` and ending with `5` |
-| `123***` | Numbers starting with `123` |
+```bash
+go test ./...
+```
 
-#### 3. Result Distribution
 
-- Constraint: the same search pattern should not return the same ticket to multiple users at the same time
-- Propose a distribution mechanism so matching tickets are assigned without duplicate simultaneous selection
 
-#### 4. Performance
+## API Endpoints
 
-- Ensure the search is performant for `10M+` records
-- Propose an efficient approach for querying and allocation
 
-#### 5. Real-World Design Proposal (No Code Required)
+| Method | Path          | Auth | Description                  | Success |
+| ------ | ------------- | ---- | ---------------------------- | ------- |
+| POST   | `/register`   | No   | Register a new user          | 201     |
+| POST   | `/login`      | No   | Log in and get a JWT         | 200     |
+| GET    | `/users`      | JWT  | List all users               | 200     |
+| GET    | `/users/{id}` | JWT  | Get a user by ID             | 200     |
+| PATCH  | `/users/{id}` | JWT  | Update `name` and/or `email` | 200     |
+| DELETE | `/users/{id}` | JWT  | Delete a user                | 204     |
 
-- Recommend the database/storage technology you would use in production and explain why
-- Describe the algorithm and indexing strategy used for wildcard pattern matching
-- Explain how you would prevent duplicate simultaneous results for the same pattern (for example, locking, reservation, or atomic allocation)
-- No code implementation is required; provide a solution/design only
 
-### Deliverables (Lottery Search System)
+Every error response has the same JSON shape:
 
-Submit a design document only (no code implementation) that includes:
+```json
+{ "error": "user not found" }
+```
 
-- Proposed solution architecture, data structures, and algorithms
-- Recommended production database/storage choice with justification (for example, query performance, concurrency handling, operational simplicity)
-- Performance analysis summarizing efficiency and tradeoffs
-- Concurrency/distribution strategy explaining how duplicate results are avoided for the same pattern
 
-### Evaluation Criteria (Lottery Search System)
+| Status | When                                                        |
+| ------ | ----------------------------------------------------------- |
+| 400    | Invalid JSON, unknown fields in the body, invalid ObjectID  |
+| 401    | Missing, invalid, or expired token; wrong email or password |
+| 404    | User not found                                              |
+| 409    | Email already exists                                        |
+| 500    | Unexpected error                                            |
 
-- Feasibility: the solution addresses the stated requirements
-- Performance: the search approach is efficient for the target scale
-- Correctness: the distribution constraint is handled correctly
-- Real-world practicality: the database/storage and concurrency approach are appropriate for production use
-- Creativity: thoughtful use of data structures and algorithms
+
+
+
+## Examples
+
+
+
+### Register
+
+```bash
+curl --request POST \
+  --url http://localhost:8080/register \
+  --header 'content-type: application/json' \
+  --data '{
+  "name": "MOCK",
+  "email": "mock@example.com",
+  "password": "mock-pass"
+}'
+```
+
+```json
+{
+  "id": "6ab644634f1783b18f402c5e",
+  "name": "MOCK",
+  "email": "mock@example.com",
+  "created_at": "2026-09-25T09:52:35.662056Z"
+}
+```
+
+Status: `201`
+
+### Login
+
+```bash
+curl --request POST \
+  --url http://localhost:8080/login \
+  --header 'content-type: application/json' \
+  --data '{
+  "email": "mock@example.com",
+  "password": "mock-pass"
+}'
+```
+
+```json
+{
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VyX2lkIjoiNmFiNjQ0NjM0ZjE3ODNiMThmNDAyYzVlIiwic3ViIjoiNmFiNjQ0NjM0ZjE3ODNiMThmNDAyYzVlIiwiZXhwIjoxNzkwNDE2NDIwLCJpYXQiOjE3OTAzMzAwMjB9.lHMm2WGnRFd8GTvJ1kIxUWDiEKIyg4-UEi2jO04c3Gg"
+}
+```
+
+Status: `200`
+
+### Using the JWT Token
+
+The token is signed with HS256 using `JWT_SECRET`. Its payload contains:
+
+
+| Claim     | Value                     |
+| --------- | ------------------------- |
+| `user_id` | the user's ID             |
+| `sub`     | the user's ID             |
+| `iat`     | time the token was issued |
+| `exp`     | 24 hours after login      |
+
+
+
+
+### List
+
+```bash
+curl http://localhost:8080/users -H "Authorization: Bearer $TOKEN"
+```
+
+```json
+[
+  {
+    "id": "6ab644634f1783b18f402c5e",
+    "name": "MOCK",
+    "email": "mock@example.com",
+    "created_at": "2026-09-25T09:52:35.662Z"
+  }
+]
+```
+
+Status: `200`
+
+### Get
+
+```bash
+curl http://localhost:8080/users/6ab644634f1783b18f402c5e -H "Authorization: Bearer $TOKEN"
+```
+
+```json
+{
+  "id": "6ab644634f1783b18f402c5e",
+  "name": "MOCK",
+  "email": "mock@example.com",
+  "created_at": "2026-09-25T09:52:35.662Z"
+}
+```
+
+Status: `200`
+
+### Update
+
+```bash
+curl -X PATCH http://localhost:8080/users/6ab644634f1783b18f402c5e \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"new name","email":"new.name@example.com"}'
+```
+
+```json
+{
+  "id": "6ab644634f1783b18f402c5e",
+  "name": "new name",
+  "email": "new.name@example.com",
+  "created_at": "2026-09-25T09:52:35.662Z"
+}
+```
+
+Status: `200`
+
+### Delete
+
+```bash
+curl -X DELETE http://localhost:8080/users/6ab644634f1783b18f402c5e -H "Authorization: Bearer $TOKEN"
+```
+
+Status: `204`
